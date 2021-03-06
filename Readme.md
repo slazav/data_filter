@@ -34,6 +34,6 @@ points are original data, green and blue are filter output made with
 options `--avrg 0` and `--avrg 1`.  Other options are `--maxd 1.5 --maxn
 50`.
 
-![data1](data1_skip.png)
+![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data1.png)
 
-![data2](data2_skip.png)
+![data2](https://raw.githubusercontent.com/slazav/data_filter/main/img/data2.png)

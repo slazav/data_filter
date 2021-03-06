@@ -8,6 +8,6 @@ plot\
 pause -1
 
 set terminal png
-set output "data1_skip.png"
+set output "data1.png"
 
 replot
