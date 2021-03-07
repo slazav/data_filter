@@ -4,15 +4,17 @@ This filter may be useful for a sensor which produces data regularly, to
 remove long periods of non-changing data and keep all important
 features.
 
-Example 1. Plot of original and filtered data. Here noise level is
-determined automatically, all features which are above the noise are
-shown on the output:
+Example 1. Plot of original and filtered data, low noise level.
 ![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data1.png)
 
-Example 2. Noisy data processed with different filter settings: narrow
+Example 2. Here noise level is determined automatically, all features
+above the noise are shown on the output:
+![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data2.png)
+
+Example 3. Noisy data processed with different filter settings: narrow
 peaks are skipped by limiting minimum buffer size, noise level set
 manually.
-![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data2.png)
+![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data3.png)
 
 Program is written in TCL and contains function which can be used as an
 input filter in `graphene` database ( https://github.com/slazav/graphene ).
