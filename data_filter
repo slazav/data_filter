@@ -19,8 +19,10 @@ proc time_add {t0 dt} {
 # Filter for skipping points.
 # Arguments:
 #   noise - Noise level. Max difference between original and filtered data.
-#   maxn - Max. filtering buffer length, points (0 for no limit).
-#   maxt - Max. filtering buffer length, seconds (0 for no limit).
+#   maxn - Upper limit for distance between filtered point (0 for no limit).
+#   maxt - Upper limit for time distance between filtered point (0 for no limit).
+#   minn - Lower limit for distance between points (0 for no limit).
+#   mint - Lower limit for time distance between points, seconds (0 for no limit).
 #   col  - Data column to use for filtering.
 #   auto_noise - calibrate noise level automatically, using factor from the argument.
 #                Reasonable value 3, use 0 to switch off.
@@ -39,6 +41,8 @@ proc flt_skip {args} {
   set noise 0
   set maxn  100
   set maxt  0
+  set minn  0
+  set mint  0
   set auto_noise 1
 
   foreach {n v} $args {
@@ -46,6 +50,8 @@ proc flt_skip {args} {
     --column {set col  $v}
     --maxn   {set maxn $v}
     --maxt   {set maxt $v}
+    --minn   {set minn $v}
+    --mint   {set mint $v}
     --noise  {set noise $v}
     --auto_noise {set auto_noise $v}
     default {error "Unknown option: $n"}
@@ -249,11 +255,17 @@ proc flt_skip {args} {
         if {$Q2 < $v} {set Q2 $v}
       }
 
+      set stop 0
       if {($noise>0 && $Q1 > 2*$noise) ||\
           ($noise>0 && $Q2 > $noise) ||\
           (4*$j < ($n-1-$j)) ||\
-          ($maxn>0 && $j > $maxn) ||\
-          ($maxt>0 && $tj > $maxt)} {
+          ($maxn>0 && $n > $maxn) ||\
+          ($maxt>0 && $tn > $maxt)} {set stop 1}
+
+      if {($minn>0 && $n < $minn) ||
+          ($mint>0 && $tn < $mint)} {set stop 0}
+
+      if {$stop} {
         set ret 1
         set ret_t [lindex [lindex $st(buf) $tj] 0]
         set ret_d [lindex [lindex $st(buf) $tj] 1]
