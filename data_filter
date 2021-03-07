@@ -144,11 +144,11 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {auto_noise 3}} {
       }
 
       # 2-segment fit: we want to find an internal point 0<j<n
-      # with best RMS deviation from 2-segment line (t0,d0)-(tj,dj)-(tn,x)
-      # with free parameters j and x.
+      # with best RMS deviation from 2-segment line (t0,d0)-(tj,dj)-(tn,dn)
+      # with free parameter j.
       # The line formula:
-      #    t<=tj: A*t,   A = $dj/$tj
-      #    t>=tj: B*(t-tj) + dj
+      #    t<=tj: A*t,   A=$dj/$tj
+      #    t>=tj: B*(t-tj) + dj,  B=($dn-dj)/($tn-$tj)
       # We will check all possible values of j and choose the best one.
 
       # best values:
@@ -156,28 +156,16 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {auto_noise 3}} {
       set opt_A Inf
       set opt_B Inf
       set opt_j 0
-      # Last point. It's actually n-1
+      # Last point. It's actually has index n-1
       set tn [lindex $dts [expr $n-1]]
       set dn [lindex $dds [expr $n-1]]
       for {set j 1} {$j<$n-1} {incr j} {
         set tj [lindex $dts $j]
         set dj [lindex $dds $j]
         set A [expr {$dj/$tj}]
+        set B [expr {($dn-$dj)/($tn-$tj)}]
 
-        # Find second segment by minimizing
-        # sum[j..n](B*(t-tj) - (d-dj))^2
-        #
-        # B = sum[j..n](d-dj)*(t-tj)/sum[j..n](t-tj)^2
-        set s1 0.0
-        set s2 0.0
-        foreach t $dts d $dds {
-          if {$t <= $tj} continue
-          set s1 [expr {$s1 + ($d-$dj)*($t-$tj)}]
-          set s2 [expr {$s2 + ($t-$tj)*($t-$tj)}]
-        }
-        set B [expr {$s1/$s2}]
-
-        # St.deviation from the fit
+        # RMS deviation from the fit:
         set D 0.0
         foreach t $dts d $dds {
           if {$t <= $tj} {
@@ -243,7 +231,7 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {auto_noise 3}} {
         if {$Q2 < $v} {set Q2 $v}
       }
 
-      if {($maxd>0 && $Q1 > $maxd) ||\
+      if {($maxd>0 && $Q1 > 2*$maxd) ||\
           ($maxd>0 && $Q2 > $maxd) ||\
           (4*$j < ($n-1-$j)) ||\
           ($maxn>0 && $j > $maxn) ||\
