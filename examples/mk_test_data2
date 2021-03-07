@@ -8,7 +8,7 @@ proc nrand {} {
   return  [expr sqrt(-2.0 * log(rand()))*cos(2*3.1415926*rand())]
 }
 
-for {set i 0} {$i<400} {incr i} {
+for {set i 0} {$i<600} {incr i} {
   incr x
   set r [nrand]
   set y [expr sin(2*3.1415926*$x/100) + 0.2*$r]

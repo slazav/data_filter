@@ -44,3 +44,10 @@ for {set i 0} {$i<200} {incr i} {
   if {$i < 100} {puts $f "$x [expr $i/100.0]"}\
   else {puts $f "$x [expr 1+0.02*[nrand]]"}
 }
+
+for {set i 0} {$i<400} {incr i} {
+  incr x
+  set r [nrand]
+  set y [expr sin(2*3.1415926*$x/100) + 0.5*$r]
+  puts $f "$x $y"
+}
