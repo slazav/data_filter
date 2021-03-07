@@ -1,11 +1,21 @@
 ## data_filter -- a smart filter for telemetry data
 
 This filter may be useful for a sensor which produces data regularly, to
-remove/average long periods of non-changing data and keep all important
+remove long periods of non-changing data and keep all important
 features.
 
+Example 1. Plot of original and filtered data. Here noise level is
+determined automatically, all features which are above the noise are
+shown on the output:
+![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data1.png)
+
+Example 2. Noisy data processed with different filter settings: narrow
+peaks are skipped by limiting minimum buffer size, noise level set
+manually.
+![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data2.png)
+
 Program is written in TCL and contains function which can be used as an
-input filter in `graphene` database.
+input filter in `graphene` database ( https://github.com/slazav/graphene ).
 
 #### Usage:
 ```
@@ -14,54 +24,59 @@ data_filter [options] < <input> > <output>
 
 #### Options:
 
-* `-c, --column <v>` -- data column to use (default: 0)
-* `-n|--maxn <v>`    -- maximum number of skipped/averaged points (default: 0, no limit)
-* `-t|--maxt`        -- maximum time between points (default: 0, no limit)
-* `-d|--maxd`        -- noise level (default: 1)
-* `-a|--avrg 1|0`    -- use average/skip mode (default 1, average)
+* `--column <v>` -- data column to use (default: 0)
+* `--maxn <v>`    -- upper limit for buffer size (default: 100 points, use 0 for no limit)
+* `--maxt <v>`    -- upper limit for buffer time span (default: 0, no limit)
+* `--minn <v>`    -- lower limit for buffer size (default: 0)
+* `--mint <v>`    -- lower limit for buffer time span (default: 0)
+* `--noise <v>`       -- noise level (default: 0)
+* `--auto_noise <v>`  -- strength of automatic noise calibration (default 1, use 0 to switch off the calibration)
 
 Input file contains lines with multiple columns. Empty lines and lines
 started with `#` are printed to the output without changes. First column
 is "time", it should monotonically increase, other columns are "data".
 Filter uses a single data column which can be selected with `--column`
-parameter. In averaging mode (`--avrg 1`) only this column is printed to
-the output, overwise original lines with all columns will be printed.
+parameter. Filter modifies data by either removing data lines from the
+input or sending them to the output without modification.
 
-#### Examples
+Parameters `--maxn` and `--maxt` control largest size of the working data
+buffer. Usually, if there is no interesting features in the data,
+distance between points on the output is approximately 1/2 of the maximum
+buffer size.
 
-Following images are made using scripts in `examples/` folder. Magenta
-points are original data, green and blue are filter output made with
-options `--avrg 0` and `--avrg 1`.  Other options are `--maxd 1.5 --maxn
-50`.
+Parameters `--minn` and `--mint` control smallest size of the working data
+buffer. All features shorter then this size are filtered out. This may be
+useful for smoothing noisy data.
 
-![data1](https://raw.githubusercontent.com/slazav/data_filter/main/img/data1.png)
+Parameter `--noise` allows to set noise level manually. There is also
+an automatic noise calibration controlled by `--auto_noise` option. If
+both are non-zero, then maximum of manual and automatic values is used.
+It may be reasonable to set `--noise` to resolution of your sensor and
+keep default `--auto_noise` setting too.
 
-![data2](https://raw.githubusercontent.com/slazav/data_filter/main/img/data2.png)
 
-#### Algorithm
+#### Algorithm (without noise calibration)
 
 On each step the filter function receives one point with timestamp and
 data and can return a point, or skip it. It also has a storage to
 keep data (buffer and previous point `t0,d0`) between steps.
 
-The very first point is printed to the output without modifications.
+The very first point is immediately printed to the output.
 Every incoming point is added to the buffer. Before this, if buffer contains
 more then 3 points following steps are done:
 
-* Buffer of length `n>=3` is fitted with a 2-segment line which start at the previous point
-and has a node at a timestamp with index `0<j<3` inside the buffer.
-The fitting function is `d0 + A*(t-t0) + (t>tj)? B*(t-tj):0` with free
-parameters A, B and tj. Optimisation for `A` and `B` is done analytically
-for all possible values of `j`, and then the best position of the node `j`
-is found.
+* Buffer of length `n>=3` is fitted with a 2-segment line which start at the
+first buffer point (which is also the previously printed point), has a node at a
+timestamp with index `0<j<n` inside the buffer, and ends at the last point.
+The only one fitting parameter is index `j`.
 
 * When finding best `j` weighting function `f(j) = 1 + 2j(j-n-1)/(n-1)^2` is
 used (quadratic function with `f(0) = f(n-1) = 1`, `f((n-1)/2) = 1/2` ).
-If we have flat noisy data than simple 2-segment fit will give almost
-random position of the node point. Without a good reason we do not want
-to have it close to the beginning (to avoid too short segments), or to
-the end (to avoid random slope of the second segment and bad evaluation
-of the stopping condition).
+Without this weighting, for flat noisy data a simple 2-segment fit will
+give almost random position of the node point. Without a good reason we
+do not want to have it close to the beginning (to avoid too short
+segments), or to the end (to avoid random slope of the second segment and
+bad evaluation of the stopping condition).
 
 * Stopping condition is evaluated. We want to print the node point
 to the output in the following cases:
@@ -70,17 +85,32 @@ to the output in the following cases:
 
   * Time span of the buffer is longer then `--maxt` parameter
 
-  * Second segment is much longer (5 or more times) then the first one.
+  * Second segment is much longer (4 or more times) then the first one.
   If the first segment in the fit is short, it means that there is an
   important feature in the beginning of the buffer, and there is no need
   to continue adding points. This always happens after sharp steps or
   peaks.
 
   * Difference between the incoming point (which is not in the buffer yet)
-  and the fit is larger then the noise level `--maxd`.
+  and the fit is larger then 2*(noise level).
 
-* If the stopping condition is satisfied, the node point (`tj, d0 + A*(tj-t0)`)
+  * Maximum deviation of the buffer data from the fit is larger then
+  the noise level.
+
+* If buffer size is smaller then `--minn/--mint` settings, then stopping
+condition is cleared.
+
+* If the stopping condition is satisfied, the node point (`tj,dj`)
 is sent to the output. First `j-1` points are removed from the buffer.
+
+#### Noise calibration
+
+If parameter `--auto_noise` is not 0, then noise calibration is
+done in the beginning of each cycle. First non-trivial problem is
+to choose data for calibration. We want to use a fixed number of points (30)
+located near beginning of the buffer. If buffer is large enough we use it.
+If not (this happens near data features when points are printed ), we use
+a separate sliding buffer of correct size.
 
 #### Non-standard timestamps
 
