@@ -18,7 +18,7 @@ for {set i 0} {$i<200} {incr i} {
 for {set i 0} {$i<200} {incr i} {
   incr x
   set r [nrand]
-  set y [expr sin(2*3.1415926*$x/100) + 0.3*$r]
+  set y [expr sin(2*3.1415926*$x/100) + 0.3*$i/200*$r]
   puts $f "$x $y"
 }
 

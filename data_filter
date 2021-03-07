@@ -16,16 +16,15 @@ proc time_add {t0 dt} {
 
 ##################################################
 
-# Filter for skipping/averaging points.
+# Filter for skipping points.
 # Arguments:
 #   maxd - Noise level. Max difference between original and filtered data.
-#   maxn - Max.filtering length, points (0 for no limit).
-#   maxt - Max.filtering length, seconds (0 for no limit).
-#   avrg - averaging/skip mode. In the skip mode only original datapoints are printed
-#   col  - Data column to use. In the average mode only this column is printed
+#   maxn - Max. filtering buffer length, points (0 for no limit).
+#   maxt - Max. filtering buffer length, seconds (0 for no limit).
+#   col  - Data column to use for filtering.
 #   auto_noise - calibrate noise level automatically, using factor from the argument.
-#                reasonable value 3, use 0 to switch off.
-#                if both auto_noise and maxd parameters are non-zero, maximum of 
+#                Reasonable value 3, use 0 to switch off.
+#                if both auto_noise and maxd parameters are non-zero, maximum of
 #                automatically found noise level and maxd is used.
 #
 # Filter function uses three global variables: time, data, storage.
@@ -34,14 +33,11 @@ proc time_add {t0 dt} {
 #
 # V.Zavjalov, 2021.03.06
 
-proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {avrg 1} {auto_noise 3}} {
+proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {auto_noise 4}} {
   global time data
 
   # Convert storage to array:
   array set st $::storage
-
-
-
 
   # What do we have in the storage:
   #  - buf: data buffer list of {t d(col)}
@@ -51,13 +47,14 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {avrg 1} {auto_noise 3}} {
   if {![info exists st(d0)]} { set st(d0) {} };
   set n [llength $st(buf)]
 
+
   ####
   # Noise level finder
   if {$auto_noise > 0} {
 
     # To calibrate noise we want to use $noise_n points
     # at the beginning of the main buffer. If the buffer is shorter,
-    # we want to use a separate sliding buffer of $noise_n length.
+    # we use a separate sliding buffer of $noise_n length.
     set noise_n 20;
 
     # sliding buffer
@@ -73,11 +70,12 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {avrg 1} {auto_noise 3}} {
       set st(sbuf) [lreplace $st(sbuf) 0 $dn]
       set ns [llength $st(sbuf)]
     }
-    # In the beginning the slidin buffer can be shorter
-    # then noise_n:
+    # In the beginning the sliding buffer can be shorter
+    # then noise_n. Use it's real length.
     set noise_n $ns
 
-    # choose what do we want to use
+    # Calculate noise as RMS deviation
+    # of a point from its two neighbours.
     set sum 0
     set cnt 0
     for {set i 1} {$i<$noise_n-1} {incr i} {
@@ -110,8 +108,9 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {avrg 1} {auto_noise 3}} {
   # Data to be returned. We can't modify $data,$time
   # before adding them o the buffer. Use ret_t/ret_d to keep values.
   set ret 0
-  set ret_d 0
   set ret_t 0
+  set ret_d 0
+
 
   # If we have previous point:
   if {$st(t0) ne {} && $st(d0) ne {}} {
@@ -127,116 +126,123 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {avrg 1} {auto_noise 3}} {
         lappend dds [expr [lindex [lindex $p 1] $col]- $st(d0)]
       }
 
-      # 2-segment fit: for each internal point 0<j<n
-      # we have  A*t + (t>=tj)? B(t-tj):0
-      # (t is measured from t0, d from d0)
-      # We do the fit for all possible values of j and
-      # choose the best one.
-
-      # If we have flat noisy data than simple 2-segment fit
-      # will give almost random position of the central point.
-      # Without a good reason we do not want to have it close
-      # to the beginning (to avoid too short segments), or to the end
-      # (to avoid random slope of the second segment and bad evaluation
-      # of the stopping condition).
-      # I will multiply fit quality by function f(j) = 1 + 2j(j-n-1)/(n-1)^2
-      # (quadratic function with f(0) = f(n-1) = 1, f((n-1)/2) = 1/2 )
+      # 2-segment fit: we want to find an internal point 0<j<n
+      # with best RMS deviation from 2-segment line (t0,d0)-(tj,dj)-(tn,x)
+      # with free parameters j and x.
+      # The line formula:
+      #    t<=tj: A*t,   A = $dj/$tj
+      #    t>=tj: B*(t-tj) + dj
+      # We will check all possible values of j and choose the best one.
 
       # best values:
       set opt_D Inf
       set opt_A Inf
       set opt_B Inf
       set opt_j 0
-      set opt_tj 0
+      # Last point. It's actually n-1
+      set tn [lindex $dts [expr $n-1]]
+      set dn [lindex $dds [expr $n-1]]
       for {set j 1} {$j<$n-1} {incr j} {
         set tj [lindex $dts $j]
+        set dj [lindex $dds $j]
+        set A [expr {$dj/$tj}]
 
-        # Minimize sum_0..j (A*t - d)^2 + sum_j..n (A*t + B(t-tj) - d)^2:
-        # a = sum(0..n)t^2
-        # c = sum(0..n)t*d
-        # b = d = sum(j..n)t(t-tj)
-        # e = sum(j..n)(t-tj)(t-tj)
-        # f = sum(j..n)(t-tj)*d
-        # A = (ce-bf)/(ae-bd)
-        # B = (af-cd)/(ae-bd)
-        set a 0.0; set b 0.0; set c 0.0; set e 0.0; set f 0.0
-        foreach dt $dts dd $dds {
-          set a [expr {$a + $dt*$dt}]
-          set c [expr {$c + $dt*$dd}]
-          if {$dt <= $tj} continue
-          set b [expr {$b + $dt*($dt-$tj)}]
-          set e [expr {$e + ($dt-$tj)*($dt-$tj)}]
-          set f [expr {$f + ($dt-$tj)*$dd}]
+        # Find second segment by minimizing
+        # sum[j..n](B*(t-tj) - (d-dj))^2
+        #
+        # B = sum[j..n](d-dj)*(t-tj)/sum[j..n](t-tj)^2
+        set s1 0.0
+        set s2 0.0
+        foreach t $dts d $dds {
+          if {$t <= $tj} continue
+          set s1 [expr {$s1 + ($d-$dj)*($t-$tj)}]
+          set s2 [expr {$s2 + ($t-$tj)*($t-$tj)}]
         }
-        set det [expr $a*$e-$b*$b]
-        if {$det == 0} continue
-
-        set A [expr {($e*$c-$b*$f)/$det}]
-        set B [expr {($a*$f-$b*$c)/$det}]
+        set B [expr {$s1/$s2}]
 
         # St.deviation from the fit
         set D 0.0
-        foreach dt $dts dd $dds {
-          if {$dt <= $tj} {
-            set D [expr {$D + ($A*$dt - $dd)**2}]
+        foreach t $dts d $dds {
+          if {$t <= $tj} {
+            set D [expr {$D + ($A*$t - $d)**2}]
           } else {
-            set D [expr {$D + ($A*$dt + $B*($dt-$tj) - $dd)**2}]
+            set D [expr {$D + ($B*($t-$tj) - ($d-$dj))**2}]
           }
         }
         set D [expr sqrt($D/($n-1))]
+
+        # If we have flat noisy data than simple 2-segment fit
+        # will give almost random position of the central point.
+        # Without a good reason we do not want to have it close
+        # to the beginning (to avoid too short segments), or to the end
+        # (to avoid random slope of the second segment and bad evaluation
+        # of the stopping condition).
+        # I will multiply D by function f(j) = 1 + 2j(j-n-1)/(n-1)^2
+        # (quadratic function with f(0) = f(n-1) = 1, f((n-1)/2) = 1/2 )
         set D [expr $D*(1 + 2.0*$j*($j-$n-1)/($n-1)**2)]
+
         if {$D <= $opt_D} { # = is important if you have many points with same values!
+          set opt_D $D
           set opt_A $A
           set opt_B $B
-          set opt_D $D
           set opt_j $j
           set opt_tj $tj
         }
       }
+      set j $opt_j
+      set tj [lindex $dts $j]
+      set dj [lindex $dds $j]
+      set B $opt_B
 
-      # Now we have a 2-segment fit (A, B, tj) with
-      # best st.deviation.
+      # Now we have a 2-segment fit best st.deviation.
       # We can reset buffer and send central point
       # to the output based on the fit "quality",
       # deviation of the new point (which is not in the buffer yet).
       # With this method it is possible to catch small peaks.
 
-      # There is one more stopping condition: 5*$j < ($n-1-$j)
+      # There are a few stopping conditions
+      # - too long buffer
+      # - new point is too far from the fit (more then noise level)
+      # - max deviation in the fit is more then noise level
+
+      # There is one more stopping condition: 4*$j < ($n-1-$j)
       # If first segment become very short it means there is
-      # A feature there. No need to add more points and make
+      # a feature there. No need to add more points and make
       # the second segment longer. This works after sharp steps or pikes.
 
-      set j $opt_j
-      set tj $opt_tj
-      set A $opt_A
-      set B $opt_B
-      set Q1 $opt_D
+      # new point, not in the buffer yet:
+      set tx [time_diff $st(t0) $time]
+      set dx [expr [lindex $data $col] - $st(d0)]
+      set Q1 [expr {abs($dj + $B*($tx-$tj) - $dx)}]
 
-      set tn [time_diff $st(t0) $time]
-      set dn [expr [lindex $data $col] - $st(d0)]
-      set Q2 [expr {abs($A*$tn + $B*($tn-$tj) - $dn)}]
+      # max absolute deviation from the fit:
+      set Q2 0
+      foreach t $dts d $dds {
+        if {$t <= $tj} {
+          set v [expr {abs($A*$t - $d)}]
+        } else {
+          set v [expr {abs($B*($t-$tj) - ($d-$dj))}]
+        }
+        if {$Q2 < $v} {set Q2 $v}
+      }
 
-      if {($maxd>0 && $Q2 > $maxd) ||\
+      if {($maxd>0 && $Q1 > $maxd) ||\
+          ($maxd>0 && $Q2 > $maxd) ||\
           (4*$j < ($n-1-$j)) ||\
           ($maxn>0 && $n > $maxn) ||\
           ($maxt>0 && $tn > $maxt)} {
         set ret 1
-        set ret_t [time_add $st(t0) $tj]
-        set ret_d [expr {$A*$tj + $st(d0)}]
+        set ret_t [lindex [lindex $st(buf) $tj] 0]
+        set ret_d [lindex [lindex $st(buf) $tj] 1]
 
 ### debug: print 2-segment fits:
 #puts "$st(t0) $st(d0)"
 #puts "$ret_t $ret_d"
-#puts "$time [expr {$A*$tn + $B*($tn-$tj) + $st(d0)}]"
-#puts "$time [lindex $data $col]"
+#puts "$time [expr {$dj + $B*($tx-$tj) + $st(d0)}]"
 #puts ""
         set st(buf) [lreplace $st(buf) 0 $j-1]; # include j point to the new buffer!
-        set st(d0) $ret_d
+        set st(d0) [lindex $ret_d $col]
         set st(t0) $ret_t
-
-        if {!$avrg} {
-          set ret_d [lindex [lindex $st(buf) 0] 1]]
-        }
       }
     }
   }\
@@ -244,11 +250,7 @@ proc flt_skip {{maxd 0} {maxn 0} {maxt 0} {col 0} {avrg 1} {auto_noise 3}} {
     # no previous point, 1st point ever
     set ret 1
     set ret_t $time
-    if {$avrg} {
-      set ret_d [lindex $data $col]
-    } else {
-      set ret_d $data
-    }
+    set ret_d $data
     set st(d0) $ret_d
     set st(t0) $ret_t
   }
@@ -282,7 +284,6 @@ foreach {n v} $::argv {
   -n|--maxn   {set maxn $v}
   -t|--maxt   {set maxt $v}
   -d|--maxd   {set maxd $v}
-  -a|--avrg   {set avrg $v}
   -n|--auto_noise {set anoise $v}
   }
 }
@@ -296,6 +297,6 @@ foreach l [split [read stdin] '\n'] {
   set time [lindex $l 0]
   set data [lreplace $l 0 0]
   if {$time eq {}} continue
-  if {[flt_skip $maxd $maxn $maxt $col $avrg $anoise]} {puts "$time $data"}
+  if {[flt_skip $maxd $maxn $maxt $col $anoise]} {puts "$time $data"}
 }
 
