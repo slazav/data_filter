@@ -1,4 +1,4 @@
-all: data1_skip.dat data2_skip.dat data2_avrg.dat data1_avrg.dat 
+all: data1_skip.dat data2_skip.dat data2_avrg.dat data1_avrg.dat data1_a.dat data2_a.dat 
 
 data1.dat: mk_test_data
 	./$<
@@ -24,6 +24,12 @@ data1_avrg.dat: data1.dat $(PROG)
 
 data2_avrg.dat: data2.dat $(PROG)
 	$(PROG) --avrg 1 --maxd 1.5 --maxn 50 < $< > $@
+
+
+data1_a.dat: data1.dat $(PROG)
+	$(PROG) --avrg 1 --maxd 0.01 --maxn 50 < $< > $@
+data2_a.dat: data2.dat $(PROG)
+	$(PROG) --avrg 1 --maxd 0.01 --maxn 50 < $< > $@
 
 clean:
 	rm -f *.dat *.png

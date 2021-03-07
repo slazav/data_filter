@@ -22,10 +22,10 @@ data_filter [options] < <input> > <output>
 
 Input file contains lines with multiple columns. Empty lines and lines
 started with `#` are printed to the output without changes. First column
-is "time", others are "data". Filter uses a single data column which can
-be selected with `--column` parameter. In averaging mode (`--avrg 1`)
-only this column is printed to the output, overwise original lines with
-all columns will be printed.
+is "time", it should monotonically increase, other columns are "data".
+Filter uses a single data column which can be selected with `--column`
+parameter. In averaging mode (`--avrg 1`) only this column is printed to
+the output, overwise original lines with all columns will be printed.
 
 #### Examples
 
