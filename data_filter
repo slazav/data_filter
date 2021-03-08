@@ -5,6 +5,8 @@
 # dt = time_diff(t1,t2) and t = time_add(t0,dt) should be defined to
 # calculate numeric difference dt=t2-t1 and to add
 # numeric difference to a timestamp t=t0+dt.
+# When using the filter in Graphene database, internal time_diff/time_add
+# should be used instead.
 
 proc time_diff {t1 t2} {
   return [expr $t2-$t1]
@@ -18,16 +20,16 @@ proc time_add {t0 dt} {
 
 # Filter for skipping points.
 # Arguments:
-#   noise - Noise level. Max difference between original and filtered data.
-#   maxn - Upper limit for distance between filtered point (0 for no limit).
-#   maxt - Upper limit for time distance between filtered point (0 for no limit).
-#   minn - Lower limit for distance between points (0 for no limit).
-#   mint - Lower limit for time distance between points, seconds (0 for no limit).
 #   col  - Data column to use for filtering.
+#   maxn - Upper limit for buffer size (0 for no limit).
+#   maxt - Upper limit for buffer time span (0 for no limit).
+#   minn - Lower limit for buffer size (0 for no limit).
+#   mint - Lower limit for buffer time span (0 for no limit).
+#   noise - Noise level. Max difference between original and filtered data.
 #   auto_noise - calibrate noise level automatically, using factor from the argument.
-#                Reasonable value 3, use 0 to switch off.
-#                if both auto_noise and maxd parameters are non-zero, maximum of
-#                automatically found noise level and maxd is used.
+#                Default value 1, use 0 to switch off.
+#                if both auto_noise and noise parameters are non-zero, maximum of
+#                automatically found and manually set values is used.
 #
 # Filter function uses three global variables: time, data, storage.
 # It can be installed as an input filters in graphene database
@@ -38,11 +40,11 @@ proc time_add {t0 dt} {
 proc flt_skip {args} {
   ## parse options
   set col   0
-  set noise 0
   set maxn  100
   set maxt  0
   set minn  0
   set mint  0
+  set noise 0
   set auto_noise 1
 
   foreach {n v} $args {
@@ -79,30 +81,30 @@ proc flt_skip {args} {
     # To calibrate noise we want to use $noise_n points
     # at the beginning of the main buffer. If the buffer is shorter,
     # we use a separate sliding buffer of $noise_n length.
-    set max_noise_n 30;
+    set noise_n 30;
 
-    # sliding buffer
+    # One more thing in the storage: sliding buffer
     if {![info exists st(sbuf)]} { set st(sbuf) {} };
 
-    # add new point to the sliding buffer
+    # Add new point to the sliding buffer
     lappend st(sbuf) [lindex $data $col]
     set ns [llength $st(sbuf)]
 
-    # remove old points
-    if {$ns > $max_noise_n} {
-      set dn [expr {$ns - $max_noise_n - 1}]
+    # Remove old points
+    if {$ns > $noise_n} {
+      set dn [expr {$ns - $noise_n - 1}]
       set st(sbuf) [lreplace $st(sbuf) 0 $dn]
       set ns [llength $st(sbuf)]
     }
+
     # In the beginning the sliding buffer can be shorter
-    # then noise_n. Use it's real length.
-    set noise_n $ns
+    # then noise_n. We should use $ns below.
 
     # Collect squares of deviations of points from
-    #  their two neighbours.
+    # their two neighbours.
     set dev {}
-    for {set i 1} {$i<$noise_n-1} {incr i} {
-      if {$n >= $noise_n} {
+    for {set i 1} {$i<$ns-1} {incr i} {
+      if {$n >= $ns} {
         # use main buffer
         set vm [lindex $st(buf) [expr $i-1]]
         set vp [lindex $st(buf) [expr $i+1]]
@@ -119,11 +121,12 @@ proc flt_skip {args} {
       }
       lappend dev [expr ($d0-($dp+$dm)/2)**2]
     }
+
     # Skip three lagrest
     # values to reduce effect of steps and pikes.
     # Do not skip values if buffer is small
     set dev [lsort -real $dev]
-    if {$noise_n == $max_noise_n} {
+    if {$ns == $noise_n} {
       set dev [lreplace $dev end-3 end]
     }
 
@@ -147,7 +150,7 @@ proc flt_skip {args} {
 
 
   # Data to be returned. We can't modify $data,$time
-  # before adding them o the buffer. Use ret_t/ret_d to keep values.
+  # before adding them to the buffer. Use ret_t/ret_d to keep values.
   set ret 0
   set ret_t 0
   set ret_d 0
@@ -157,7 +160,7 @@ proc flt_skip {args} {
   if {$st(t0) ne {} && $st(d0) ne {}} {
 
     # If the buffer contains 3 or more points
-    # we can do 2-segment fit:
+    # and we can do 2-segment fit:
     if {$n>2} {
 
       # extract d-d0, t-t0 lists
@@ -168,10 +171,10 @@ proc flt_skip {args} {
       }
 
       # 2-segment fit: we want to find an internal point 0<j<n
-      # with best RMS deviation from 2-segment line (t0,d0)-(tj,dj)-(tn,dn)
-      # with free parameter j.
+      # with best RMS deviation from 2-segment line (t0,d0)-(tj,dj)-(tn,dn).
+      # The only free parameter is index j.
       # The line formula:
-      #    t<=tj: A*t,   A=$dj/$tj
+      #    t<=tj: A*t,            A=$dj/$tj
       #    t>=tj: B*(t-tj) + dj,  B=($dn-dj)/($tn-$tj)
       # We will check all possible values of j and choose the best one.
 
@@ -180,7 +183,7 @@ proc flt_skip {args} {
       set opt_A Inf
       set opt_B Inf
       set opt_j 0
-      # Last point. It's actually has index n-1
+      # Last point (index n-1, not n!)
       set tn [lindex $dts [expr $n-1]]
       set dn [lindex $dds [expr $n-1]]
       for {set j 1} {$j<$n-1} {incr j} {
@@ -210,7 +213,7 @@ proc flt_skip {args} {
         # (quadratic function with f(0) = f(n-1) = 1, f((n-1)/2) = 1/2 )
         set D [expr $D*(1 + 2.0*$j*($j-$n-1)/($n-1)**2)]
 
-        if {$D <= $opt_D} { # = is important if you have many points with same values!
+        if {$D <= $opt_D} { # "=" is important if you have many points with same values!
           set opt_D $D
           set opt_A $A
           set opt_B $B
@@ -223,28 +226,26 @@ proc flt_skip {args} {
       set dj [lindex $dds $j]
       set B $opt_B
 
-      # Now we have a 2-segment fit best st.deviation.
+      # Now we have a 2-segment fit with best RMS deviation.
       # We can reset buffer and send central point
-      # to the output based on the fit "quality",
-      # deviation of the new point (which is not in the buffer yet).
-      # With this method it is possible to catch small peaks.
+      # to the output if some "stopping condition" is met.
 
       # There are a few stopping conditions
       # - too long buffer
-      # - new point is too far from the fit (more then noise level)
+      # - new point is too far from the fit
       # - max deviation in the fit is more then noise level
 
       # There is one more stopping condition: 4*$j < ($n-1-$j)
       # If first segment become very short it means there is
       # a feature there. No need to add more points and make
-      # the second segment longer. This works after sharp steps or pikes.
+      # the second segment longer. This works after sharp steps or peaks.
 
-      # new point, not in the buffer yet:
+      # Deviation of the new point (which is not in the buffer yet)
       set tx [time_diff $st(t0) $time]
       set dx [expr [lindex $data $col] - $st(d0)]
       set Q1 [expr {abs($dj + $B*($tx-$tj) - $dx)}]
 
-      # max absolute deviation from the fit:
+      # Max absolute deviation of buffer points:
       set Q2 0
       foreach t $dts d $dds {
         if {$t <= $tj} {
@@ -255,6 +256,7 @@ proc flt_skip {args} {
         if {$Q2 < $v} {set Q2 $v}
       }
 
+      # Calculate stopping condition:
       set stop 0
       if {($noise>0 && $Q1 > 2*$noise) ||\
           ($noise>0 && $Q2 > $noise) ||\
@@ -262,22 +264,17 @@ proc flt_skip {args} {
           ($maxn>0 && $n > $maxn) ||\
           ($maxt>0 && $tn > $maxt)} {set stop 1}
 
+      # Clear stopping condition if buffer is too short (--minn, --mint parameters)
       if {($minn>0 && $n < $minn) ||
           ($mint>0 && $tn < $mint)} {set stop 0}
 
+      # let's send the point to output!
       if {$stop} {
         set ret 1
         set ret_t [lindex [lindex $st(buf) $tj] 0]
         set ret_d [lindex [lindex $st(buf) $tj] 1]
-
-### debug: print 2-segment fits:
-#puts "$st(t0) $st(d0)"
-#puts "$ret_t $ret_d $noise"
-#puts "$time [expr {$dj + $B*($tx-$tj) + $st(d0)}]"
-#puts ""
-        set st(buf) [lreplace $st(buf) 0 $j-1]; # include j point to the new buffer!
-        set st(d0) [lindex $ret_d $col]
-        set st(t0) $ret_t
+        # Crop beginning of the buffer, it should start with the sent point!
+        set st(buf) [lreplace $st(buf) 0 $j-1];
       }
     }
   }\
@@ -286,22 +283,21 @@ proc flt_skip {args} {
     set ret 1
     set ret_t $time
     set ret_d $data
-    set st(d0) $ret_d
-    set st(t0) $ret_t
   }
 
-  # add new point to the buffer
+  # Add new point to the buffer
   lappend st(buf) [list $time $data]
 
-  #update data
+  # Update data
   if {$ret} {
     set time $ret_t
     set data $ret_d
+    set st(d0) [lindex $ret_d $col]
+    set st(t0) $ret_t
   }
 
-  # convert storage
+  # Convert storage
   set ::storage [array get st]
-#  return 0
   return $ret
 }
 
