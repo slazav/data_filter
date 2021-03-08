@@ -24,7 +24,7 @@ for {set i 0} {$i<100} {incr i} {
 
 for {set i 0} {$i<200} {incr i} {
   incr x
-  if {$i != 100} {puts "$x 0.02*[nrand]"}\
+  if {$i != 100} {puts "$x [expr 0.02*[nrand]]"}\
   else {puts "$x 2"}
 }
 
