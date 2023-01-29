@@ -1,5 +1,7 @@
 ## data_filter -- a smart filter for telemetry data
 
+# V.Zavjalov, 2021.03.06
+
 This filter may be useful for a sensor which produces data regularly, to
 remove long periods of non-changing data and keep all important
 features.
@@ -21,7 +23,7 @@ input filter in `graphene` database ( https://github.com/slazav/graphene ).
 
 #### Usage:
 ```
-data_filter [options] < <input> > <output>
+data_filter.tcl [options] < <input> > <output>
 ```
 
 #### Options:
